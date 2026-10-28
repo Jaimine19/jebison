@@ -134,6 +134,12 @@ def inject_styles():
         [data-testid="stSidebar"] * { color:#e9f4f2; }
         [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { color:#a9c2c1; }
         [data-testid="stSidebar"] [data-testid="stRadio"] label { border-radius:10px; }
+        [data-testid="stSidebar"] [data-testid="stMetric"] {
+            background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1);
+            border-radius:12px; padding:.75rem .85rem; box-shadow:none;
+        }
+        [data-testid="stSidebar"] [data-testid="stMetricLabel"] p { color:#a9c2c1 !important; }
+        [data-testid="stSidebar"] [data-testid="stMetricValue"] { color:#fff; font-size:1.35rem; }
         .block-container { max-width:1320px; padding:2rem 2rem 3rem; }
         h1,h2,h3 { font-family:'Manrope',sans-serif !important; letter-spacing:-.04em; color:var(--ink); }
         h1 { font-size:2.1rem !important; font-weight:800 !important; }
@@ -320,8 +326,8 @@ def save_entry(customer, size_ml, quantity, rate, paid, entry_date):
         )
 
 
-def add_entry_form(rates):
-    with st.expander("＋  Add a customer entry", expanded=False):
+def add_entry_form(rates, expanded=False):
+    with st.expander("＋  Add a customer entry", expanded=expanded):
         with st.form("add_entry_form", clear_on_submit=True):
             customer = st.text_input("Customer or business name", placeholder="e.g. Ramesh Traders")
             left, middle, right = st.columns(3)
@@ -353,12 +359,20 @@ def ledger_view(entries):
     add_entry_form(fetch_dashboard()[1])
     controls = st.columns([1, 2, 1])
     with controls[0]:
-        status_filter = st.selectbox("Payment status", ["All", "Due", "Partial", "Paid"])
+        status_filter = st.selectbox(
+            "Payment status",
+            ["All", "Outstanding", "Due", "Partial", "Paid"],
+            key="ledger_status_filter",
+        )
     with controls[1]:
         search = st.text_input("Search customers", placeholder="Search by customer name")
     filtered = [
         entry for entry in entries
-        if (status_filter == "All" or entry["status"] == status_filter)
+        if (
+            status_filter == "All"
+            or (status_filter == "Outstanding" and entry["remaining"] > 0)
+            or entry["status"] == status_filter
+        )
         and search.casefold() in entry["customer"].casefold()
     ]
     st.caption(f"{len(filtered)} {'entry' if len(filtered) == 1 else 'entries'}")
@@ -470,22 +484,52 @@ def settings_view(rates):
 
 
 def show_dashboard():
+    entries, rates, collected, outstanding, customer_count = fetch_dashboard()
+    open_orders = sum(1 for entry in entries if entry["remaining"] > 0)
+
     with st.sidebar:
         st.markdown(
-            '<div style="font:800 1.25rem Manrope,sans-serif;color:#fff;padding:.5rem 0 1.1rem">◉ Clearwater</div>',
+            '<div style="font:800 1.25rem Manrope,sans-serif;color:#fff;padding:.5rem 0 .25rem">◉ Clearwater</div>',
             unsafe_allow_html=True,
         )
-        st.caption("WATER BUSINESS · FINANCE")
-        page = st.radio("Workspace", ["Overview", "Customer ledger", "Settings"], label_visibility="collapsed")
+        st.caption("YOUR WATER BUSINESS WORKSPACE")
+        st.radio(
+            "Workspace",
+            ["Overview", "Customer ledger", "New order", "Settings"],
+            format_func=lambda page_name: {
+                "Overview": "◉  Overview",
+                "Customer ledger": "▤  Customer ledger",
+                "New order": "＋  New order",
+                "Settings": "⚙  Settings",
+            }[page_name],
+            label_visibility="collapsed",
+            key="workspace_page",
+        )
+        st.divider()
+        st.markdown("#### Ledger snapshot")
+        st.metric("Outstanding balance", format_inr(outstanding))
+        st.caption(f"{open_orders:,} orders still need payment")
+        if st.button("Review unpaid balances", use_container_width=True):
+            st.session_state.workspace_page = "Customer ledger"
+            st.session_state.ledger_status_filter = "Outstanding"
+            st.rerun()
+        st.caption(f"{len(entries):,} total orders · {customer_count:,} customers")
         st.divider()
         st.markdown(f"**{st.session_state.username}**")
-        st.caption("Owner account")
+        st.caption("Owner account · Full access")
         if st.button("Sign out", use_container_width=True):
-            for key in ("user_id", "username", "confirm_reset", "confirm_delete_id"):
+            for key in (
+                "user_id",
+                "username",
+                "confirm_reset",
+                "confirm_delete_id",
+                "workspace_page",
+                "ledger_status_filter",
+            ):
                 st.session_state.pop(key, None)
             st.rerun()
 
-    entries, rates, collected, outstanding, customer_count = fetch_dashboard()
+    page = st.session_state.workspace_page
     if page == "Overview":
         st.markdown(
             f"""<div class="hero"><p class="eyebrow">Business at a glance</p>
@@ -542,6 +586,10 @@ def show_dashboard():
         add_entry_form(rates)
     elif page == "Customer ledger":
         ledger_view(entries)
+    elif page == "New order":
+        st.subheader("Create a customer order")
+        st.caption("Add an order and record any payment received today.")
+        add_entry_form(rates, expanded=True)
     else:
         settings_view(rates)
 
